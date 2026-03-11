@@ -27,7 +27,7 @@ git_extra_default_branch() {
 #
 
 is_git_repo() {
-    git rev-parse --show-toplevel >/dev/null 2>&1
+    git rev-parse --git-dir >/dev/null 2>&1
     result=$?
     if test $result != 0; then
         >&2 echo 'Not a git repo!'
