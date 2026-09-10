@@ -40,6 +40,7 @@ Passing an explicit destination copies files only; it does not change `core.hook
 ```bash
 ./bin/tests/test_install_bin.sh
 ./hooks/tests/test_install_hooks.sh
+./hooks/tests/test_prepare_commit_msg.sh
 ```
 
 ## Tools
