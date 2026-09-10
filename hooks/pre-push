@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# The prefix for branches that are forbidden from being pushed
+FORBIDDEN_PREFIX="sandbox/"
+
+# Read the standard input for the push information
+# The input format is: local_ref remote_ref local_sha remote_sha
+while read local_ref remote_ref local_sha remote_sha; do
+  # Extract the local branch name from the ref (e.g., refs/heads/sandbox/my-feature -> sandbox/my-feature)
+  local_branch=$(git rev-parse --abbrev-ref "$local_ref")
+
+  # Check if the local branch name starts with the forbidden prefix
+  # The [[ ... ]] syntax with the = pattern match is used for string matching
+  if [[ "$local_branch" = "$FORBIDDEN_PREFIX"* ]]; then
+    echo "Error: Branch '$local_branch' starts with '$FORBIDDEN_PREFIX' and is marked as local-only. Cannot push." >&2
+    exit 1 # Exit with a non-zero status to abort the push
+  fi
+done
+
+# If the loop finishes without finding a forbidden branch, allow the push
+exit 0

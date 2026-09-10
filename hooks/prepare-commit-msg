@@ -1,0 +1,107 @@
+#!/bin/bash
+#
+# An example hook script to prepare the commit log message.
+# Called by "git commit" with the name of the file that has the
+# commit message, followed by the description of the commit
+# message's source.  The hook's purpose is to edit the commit
+# message file.  If the hook fails with a non-zero status,
+# the commit is aborted.
+#
+# To enable this hook, rename this file to "prepare-commit-msg".
+
+# This hook includes three examples. The first one removes the
+# "# Please enter the commit message..." help message.
+#
+# The second includes the output of "git diff --name-status -r"
+# into the message, just before the "git status" output.  It is
+# commented because it doesn't cope with --amend or with squashed
+# commits.
+#
+# The third example adds a Signed-off-by line to the message, that can
+# still be edited.  This is rarely a good idea.
+
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+SHA1=$3
+
+EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+
+AICOMMIT=${AICOMMIT:-true}
+# local copilot-api via ~/.config/io.datasette.llm/extra-openai-models.yaml
+AICOMMIT_MODEL=${AICOMMIT_MODEL:-copilot-api/gpt-5.6-luna}
+AICOMMIT_REASONING_EFFORT=${AICOMMIT_REASONING_EFFORT:-high}
+#AICOMMIT_MODEL=${AICOMMIT_MODEL:-github_copilot/gpt-5.2}
+#AICOMMIT_MODEL=${AICOMMIT_MODEL:-github_copilot/gpt-5-mini}
+#AICOMMIT_MODEL=${AICOMMIT_MODEL:-github_copilot/gemini-2.5-pro}
+#AICOMMIT_MODEL=${AICOMMIT_MODEL:-github_copilot/claude-haiku-4.5}
+
+#AICOMMIT_MODEL_COMPARE=${AICOMMIT_MODEL_COMPARE:-github_copilot/o4-mini}
+#AICOMMIT_MODEL_COMPARE=${AICOMMIT_MODEL_COMPARE:-github_copilot/gpt-5.2}
+#AICOMMIT_MODEL_COMPARE=${AICOMMIT_MODEL_COMPARE:-github_copilot/claude-haiku-4.5}
+
+TMPFILE=$(mktemp /tmp/commit-msg.XXXXXX)
+DIFF_FILE=$(mktemp /tmp/commit-diff.XXXXXX)
+
+cleanup() {
+    rm -f "$TMPFILE" "$DIFF_FILE"
+}
+
+trap cleanup EXIT
+
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    DIFF_ARGS=(diff --cached)
+else
+    # The first commit has no HEAD yet, so diff against the empty tree explicitly.
+    DIFF_ARGS=(diff --cached "$EMPTY_TREE")
+fi
+
+if [[ "$AICOMMIT" == "true" && "$COMMIT_SOURCE" != "message" ]]; then
+    if command -v llm >/dev/null 2>&1; then
+        if ! git "${DIFF_ARGS[@]}" >"$DIFF_FILE"; then
+            echo "Error collecting staged changes for commit message generation."
+            exit 1
+        fi
+
+        # Display repository info similar to hg hook output
+        GIT_REMOTE=$(git remote get-url origin 2>/dev/null || echo "(no remote)")
+        LLM_ARGS=(--no-stream -t ai-commit -m "$AICOMMIT_MODEL")
+        if [[ -n "${AICOMMIT_REASONING_EFFORT:-}" ]]; then
+            LLM_ARGS+=(-o reasoning_effort "$AICOMMIT_REASONING_EFFORT")
+        fi
+        echo "        Git Repository: $GIT_REMOTE"
+        if [[ -n "${AICOMMIT_REASONING_EFFORT:-}" ]]; then
+            echo "Analyzing Code Changes: llm ($AICOMMIT_MODEL) [$AICOMMIT_REASONING_EFFORT]"
+        else
+            echo "Analyzing Code Changes: llm ($AICOMMIT_MODEL)"
+        fi
+        echo
+        echo "Please wait..."
+        # ponytail: stdin avoids ARG_MAX; instructions live in llm template ai-commit
+        if ! llm "${LLM_ARGS[@]}" <"$DIFF_FILE" >"$TMPFILE"; then
+            echo "Error generating commit message with llm."
+            exit 0
+        fi
+
+        if [[ "${AICOMMIT_MODEL_COMPARE:-}" ]]; then
+            echo "Analyzing Code Changes: llm -t ai-commit -m $AICOMMIT_MODEL_COMPARE"
+            echo >>"$TMPFILE"
+            echo >>"$TMPFILE"
+            {
+                echo "#######################################################################"
+                echo "#    $AICOMMIT_MODEL"
+                echo "#"
+                echo "#    $AICOMMIT_MODEL_COMPARE"
+                echo "#######################################################################"
+            } >>"$TMPFILE"
+            if ! llm --no-stream -t ai-commit -m "$AICOMMIT_MODEL_COMPARE" <"$DIFF_FILE" | sed -e 's/^/# /' >>"$TMPFILE"; then
+                echo "Error generating commit message with llm."
+                exit 0
+            fi
+        fi
+        sed -e 's/^[^#]/# /g' <"$COMMIT_MSG_FILE" >>"$TMPFILE"
+        cp "$TMPFILE" "$COMMIT_MSG_FILE"
+    else
+        echo "llm command not found. Skipping AI commit message generation."
+    fi
+fi
+echo "Commit message prepared..."

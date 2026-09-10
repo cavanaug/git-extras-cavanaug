@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Former single installer — split into install-hooks and install-bin.
+cat <<'EOF' >&2
+install: replaced by two entrypoints:
+  ./install-hooks [dest]   # Git hooks into ~/.config/git/hooks (or dest)
+  ./install-bin [dest]     # utilities into ~/.local/bin (or dest)
+EOF
+exit 2

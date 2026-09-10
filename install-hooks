@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Copy Git hooks from hooks/ into the user hooks directory.
+#
+# Usage: ./install-hooks [dest]
+#   dest defaults to `git config --global core.hooksPath`, or
+#   ~/.config/git/hooks if that is unset. When dest is omitted and
+#   core.hooksPath is unset, it is set to ~/.config/git/hooks.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  cat <<'EOF' >&2
+Usage: ./install-hooks [dest]
+  Copy hooks from hooks/ into dest.
+  dest defaults to git config --global core.hooksPath, or ~/.config/git/hooks.
+EOF
+}
+
+if [[ $# -gt 1 ]]; then
+  usage
+  exit 2
+fi
+
+DEFAULT_DEST="$HOME/.config/git/hooks"
+SET_HOOKS_PATH=0
+
+if [[ $# -eq 1 ]]; then
+  DEST="$1"
+else
+  DEST="$(git config --global --get core.hooksPath || true)"
+  DEST="${DEST/#\~/$HOME}"
+  if [[ -z "$DEST" ]]; then
+    DEST="$DEFAULT_DEST"
+    SET_HOOKS_PATH=1
+  fi
+fi
+
+mkdir -p "$DEST"
+
+shopt -s nullglob
+for src in "$ROOT/hooks"/*; do
+  [[ -f "$src" && -x "$src" ]] || continue
+  base="$(basename "$src")"
+  install -m 755 "$src" "$DEST/$base"
+  echo "install $DEST/$base"
+done
+
+if [[ "$SET_HOOKS_PATH" -eq 1 ]]; then
+  git config --global core.hooksPath "$DEST"
+  echo "git config --global core.hooksPath $DEST"
+fi
+
+echo "done -> $DEST"
