@@ -6,7 +6,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 "$ROOT/install-bin" "$TMP/out"
-for name in git-browse git-colorize; do
+for name in git-browse git-colorize lg; do
   test -x "$TMP/out/$name" || { echo "missing or not executable: $name" >&2; exit 1; }
 done
 
