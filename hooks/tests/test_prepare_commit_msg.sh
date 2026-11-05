@@ -40,7 +40,7 @@ init_repo() {
   git -C "$repo" config user.name t
 }
 
-# Default model is codex/gpt-5.6-luna (same as hg-aicommit)
+# Default model is openai-codex/gpt-6-luna (llm models: OpenAI Codex)
 REPO="$TMP/repo"
 init_repo "$REPO"
 echo a >"$REPO/f"
@@ -56,8 +56,8 @@ grep -q -- '--no-stream' "$ARGS_FILE" || { echo "missing --no-stream" >&2; exit 
 grep -qx -- '-t' "$ARGS_FILE" || { echo "missing -t" >&2; exit 1; }
 grep -qx -- 'ai-commit' "$ARGS_FILE" || { echo "missing ai-commit template" >&2; exit 1; }
 grep -qx -- '-m' "$ARGS_FILE" || { echo "missing -m" >&2; exit 1; }
-grep -qx -- 'codex/gpt-5.6-luna' "$ARGS_FILE" || {
-  echo "default model is not codex/gpt-5.6-luna:" >&2
+grep -qx -- 'openai-codex/gpt-6-luna' "$ARGS_FILE" || {
+  echo "default model is not openai-codex/gpt-6-luna:" >&2
   cat "$ARGS_FILE" >&2
   exit 1
 }

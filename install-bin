@@ -26,7 +26,8 @@ shopt -s nullglob
 for src in "$ROOT/bin"/*; do
   [[ -f "$src" && -x "$src" ]] || continue
   base="$(basename "$src")"
-  install -m 755 "$src" "$DEST/$base"
+  # rx-only: edit the repo copy, not the installed one.
+  install -m 555 "$src" "$DEST/$base"
   echo "install $DEST/$base"
 done
 

@@ -27,8 +27,8 @@ SHA1=$3
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 
 AICOMMIT=${AICOMMIT:-true}
-# ChatGPT OAuth via llm-openai-codex (llm codex status)
-AICOMMIT_MODEL=${AICOMMIT_MODEL:-codex/gpt-5.6-luna}
+# ChatGPT OAuth via llm-openai-via-codex (llm models: openai-codex/...)
+AICOMMIT_MODEL=${AICOMMIT_MODEL:-openai-codex/gpt-6-luna}
 AICOMMIT_REASONING_EFFORT=${AICOMMIT_REASONING_EFFORT:-high}
 #AICOMMIT_MODEL=${AICOMMIT_MODEL:-github_copilot/gpt-5-mini}
 #AICOMMIT_MODEL=${AICOMMIT_MODEL:-github_copilot/claude-haiku-4.5}

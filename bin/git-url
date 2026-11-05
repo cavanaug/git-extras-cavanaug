@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Print a GitHub/GitHub Enterprise file permalink without opening a browser.
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: git url [--fetch] [--remote NAME] [--] FILE
+       git-url [--fetch] [--remote NAME] [--] FILE
+
+Print an HTTPS permalink to FILE at its repository's current HEAD commit.
+FILE may be absolute or relative; the caller need not be inside its repository.
+
+  --fetch        Refresh the selected remote's branch refs before checking.
+  --remote NAME  Override the branch's configured remote (fallback: origin).
+  -h, --help     Show this help.
+
+Warnings go to stderr; stdout contains only the URL. Uncommitted files and
+commits not known to be pushed still produce a best-effort URL (exit 0).
+Invalid arguments exit 2; errors preventing URL construction exit 1.
+
+By default, no network requests are made. Pushed status uses cached remote
+branch refs, which may be stale; --fetch refreshes them. Server availability,
+permissions, and commits published only through tags are not verified.
+Requires Bash, Git, and standard Unix utilities (including readlink).
+Supports GitHub's /blob/ layout, including enterprise hosts, with scp-style
+SSH, ssh://, HTTP, and HTTPS remote URLs.
+EOF
+}
+
+die() { printf 'git-url: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'git-url: warning: %s\n' "$*" >&2; }
+usage_error() { printf 'git-url: %s\n' "$*" >&2; usage >&2; exit 2; }
+
+# Work bytewise so UTF-8 is encoded as its underlying bytes, not codepoints.
+encode_path() {
+    local LC_ALL=C value=$1 result='' char hex i
+    for ((i = 0; i < ${#value}; i++)); do
+        char=${value:i:1}
+        case "$char" in
+            [a-zA-Z0-9.~_/-]) result+=$char ;;
+            *) printf -v hex '%%%02X' "'$char"; result+=$hex ;;
+        esac
+    done
+    printf '%s' "$result"
+}
+
+# Hash a symlink's stored target, not the file it points to. Preserve trailing
+# newlines in that target; regular files use Git's normal clean/EOL filters.
+worktree_blob() {
+    local target
+    if [[ -L $1 ]]; then
+        target=$(readlink "$1" && printf '.') || return 1
+        target=${target%.}
+        target=${target%$'\n'}
+        printf '%s' "$target" | git_repo hash-object --stdin
+    else
+        git_repo hash-object --path="$path" -- "$1"
+    fi
+}
+
+# Read the configured URL, not transport-only insteadOf rewrites. Never echo
+# the raw URL: it may contain credentials. Only GitHub repository paths apply.
+web_url() {
+    local raw=$1 rest authority host path
+    case "$raw" in
+        https://*|http://*|ssh://*)
+            rest=${raw#*://}
+            [[ $rest == */* ]] || return 1
+            authority=${rest%%/*}
+            path=${rest#*/}
+            host=${authority##*@}
+            if [[ $raw == ssh://* ]]; then host=${host%%:*}; fi
+            ;;
+        *)
+            if [[ $raw =~ ^([^/@:]+@)?([^/:]+):(.+)$ ]]; then
+                host=${BASH_REMATCH[2]}
+                path=${BASH_REMATCH[3]}
+            else
+                return 1
+            fi
+            ;;
+    esac
+    path=${path%/}
+    path=${path%.git}
+    [[ $host =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*(:[0-9]+)?$ ]] || return 1
+    [[ $path =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]] || return 1
+    case "$path" in ./*|../*|*/.|*/..) return 1 ;; esac
+    printf 'https://%s/%s' "$host" "$path"
+}
+
+fetch=false
+remote=''
+explicit_remote=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --fetch) fetch=true; shift ;;
+        --remote)
+            [[ $# -ge 2 && -n $2 && $2 != -* ]] || usage_error '--remote requires a remote name'
+            remote=$2; explicit_remote=true; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) usage_error 'unknown option (use -- before a filename beginning with -)' ;;
+        *) break ;;
+    esac
+done
+[[ $# == 1 && -n $1 ]] || usage_error 'expected one file path'
+file=$1
+[[ -f $file || -L $file ]] || die 'file does not exist or is not a file'
+parent=.
+[[ $file != */* ]] || parent=${file%/*}
+[[ -n $parent ]] || parent=/
+name=${file##*/}
+# A sentinel prevents command substitution from trimming newlines in the path.
+directory=$(cd -P -- "$parent" && pwd -P && printf '.') || die 'cannot resolve file directory'
+directory=${directory%.}
+directory=${directory%$'\n'}
+git_repo() { command git --literal-pathspecs -C "$directory" "$@"; }
+[[ $(git_repo rev-parse --is-inside-work-tree 2>/dev/null) == true ]] ||
+    die 'file is not inside a Git worktree'
+head=$(git_repo rev-parse --verify HEAD 2>/dev/null) || die 'repository has no HEAD commit'
+prefix=$(git_repo rev-parse --show-prefix) || die 'cannot determine repository-relative path'
+path=$prefix$name
+# Subsequent pathspecs are repository-relative, not relative to the file's parent.
+directory=$(git_repo rev-parse --show-toplevel && printf '.') || die 'cannot determine worktree root'
+directory=${directory%.}
+directory=${directory%$'\n'}
+
+if ! $explicit_remote; then
+    branch=$(git_repo symbolic-ref --quiet HEAD 2>/dev/null) || branch=''
+    branch=${branch#refs/heads/}
+    if [[ -n $branch ]]; then
+        remote=$(git_repo config --get "branch.$branch.remote") || remote=''
+    fi
+    if [[ -z $remote || $remote == . ]] ||
+        ! git_repo config --get "remote.$remote.url" >/dev/null; then
+        remote=origin
+    fi
+fi
+[[ -n $remote && $remote != -* && $remote != . ]] || die 'invalid remote name'
+git_repo check-ref-format "refs/remotes/$remote/check" >/dev/null 2>&1 || die 'invalid remote name'
+# Fetch uses the first URL, whereas config --get returns the last. NUL output
+# keeps each configured value intact, without expanding transport rewrites.
+IFS= read -r -d '' raw_url < <(git_repo config --null --get-all "remote.$remote.url") ||
+    die 'selected remote has no configured URL'
+base=$(web_url "$raw_url") || die 'remote URL is not a supported GitHub web repository URL'
+url="$base/blob/$head/$(encode_path "$path")"
+
+if $fetch; then
+    if ! git_repo -c core.hooksPath=/dev/null fetch --quiet --prune --no-tags \
+        --no-recurse-submodules -- "$remote" "+refs/heads/*:refs/remotes/$remote/*" >/dev/null 2>&1; then
+        warn 'fetch failed; push verification uses any cached remote refs (check connectivity and authentication)'
+    fi
+fi
+
+head_blob=$(git_repo rev-parse --verify "$head:$path" 2>/dev/null) || head_blob=''
+if [[ -z $head_blob ]]; then
+    warn 'file is absent from HEAD (untracked or newly added); this permalink will not resolve'
+fi
+dirty=false
+for comparison in worktree index; do
+    options=()
+    [[ $comparison != index ]] || options+=(--cached)
+    if git_repo diff --quiet --no-ext-diff --no-textconv "${options[@]}" "$head" -- "$path"; then
+        :
+    else
+        result=$?
+        if [[ $result == 1 ]]; then
+            dirty=true
+        else
+            warn 'cannot compare file with HEAD; uncommitted status could not be verified'
+        fi
+    fi
+done
+# Diff can skip files marked assume-unchanged/skip-worktree. Read file/symlink
+# content as well without writing blobs or following a symlink's target.
+if [[ -n $head_blob ]]; then
+    if disk_blob=$(worktree_blob "$directory/$path"); then
+        [[ $disk_blob == "$head_blob" ]] || dirty=true
+    else
+        warn 'cannot read file content; uncommitted status could not be verified'
+    fi
+fi
+if $dirty; then
+    warn 'file has uncommitted changes (staged or unstaged); permalink shows HEAD, not those changes'
+fi
+
+# Ignore symbolic refs: a locally redirected origin/HEAD is not push evidence.
+refs=$(git_repo for-each-ref --format='%(refname) %(symref)' "refs/remotes/$remote/") ||
+    die 'cannot inspect cached remote refs'
+have_refs=false
+while read -r ref symref; do
+    if [[ -n $ref && -z $symref ]]; then have_refs=true; break; fi
+done <<<"$refs"
+if ! $have_refs; then
+    warn 'cannot verify pushed status: no cached branch refs for selected remote; try --fetch'
+else
+    containing=$(git_repo for-each-ref --contains="$head" --format='%(refname) %(symref)' \
+        "refs/remotes/$remote/") || die 'cannot check commit reachability'
+    published=false
+    while read -r ref symref; do
+        if [[ -n $ref && -z $symref ]]; then published=true; break; fi
+    done <<<"$containing"
+    if ! $published; then
+        warn 'HEAD is not known to be pushed to selected remote (cached refs); permalink may not resolve; push or try --fetch'
+    fi
+fi
+
+printf '%s\n' "$url"
